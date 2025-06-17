@@ -12,11 +12,12 @@ app = FastAPI()
 
 # === In-Memory Mock DB ===
 pours = []
+deleted_pours = []  # NEW: track deleted pours
 
 # === Predefined Companies ===
 PREDEFINED_COMPANIES = ["PCL", "Graham", "Bird"]
 COMPANY_COLORS = {
-    "PCL": "#FFD700",   # Yellow
+    "PCL": "#E6B800",    # Darker Yellow
     "Graham": "#FF0000", # Red
     "Bird": "#008000"    # Green
 }
@@ -76,6 +77,10 @@ def calendar_view():
         }
         for p in pours
     ]
+    deleted_log = "".join([
+        f"<li>{p.date.strftime('%Y-%m-%d')} - {p.company}: {p.tag} ({p.area}) - {p.volume_m3}m³" + (f" | {p.comment}" if p.comment else "") + "</li>"
+        for p in deleted_pours[::-1]
+    ])
     return f"""
     <html>
     <head>
@@ -139,6 +144,9 @@ def calendar_view():
     <body>
         <h1>Concrete Pour Calendar</h1>
         <div id='calendar'></div>
+        <hr>
+        <h2>Deleted Pour Log</h2>
+        <ul>{deleted_log or '<li>No deleted pours yet.</li>'}</ul>
     </body>
     </html>
     """
@@ -166,7 +174,14 @@ def handle_form(company: str = Form(...), area: str = Form(...), tag: str = Form
 @app.post("/delete/{pour_id}")
 def delete_pour(pour_id: UUID):
     global pours
-    pours = [p for p in pours if p.id != pour_id]
+    found = None
+    for p in pours:
+        if p.id == pour_id:
+            found = p
+            break
+    if found:
+        pours.remove(found)
+        deleted_pours.append(found)
     return {"status": "deleted"}
 
 if __name__ == "__main__":
