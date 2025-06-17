@@ -77,3 +77,5 @@ watchfiles==1.1.0
 websockets==15.0.1
 wheel==0.45.1
 wrapt==1.17.2
+fpdf==1.7.2
+
