@@ -1,24 +1,22 @@
+import os
 from fastapi import FastAPI, HTTPException, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4, UUID
-from datetime import datetime
+from datetime import datetime, date
+import json
+from collections import defaultdict
 
 app = FastAPI()
 
 # === In-Memory Mock DB ===
-companies = {}
 pours = []
 
 # === Predefined Companies ===
 PREDEFINED_COMPANIES = ["PCL", "Graham", "Bird"]
 
 # === Models ===
-class Company(BaseModel):
-    id: UUID
-    name: str
-
 class Pour(BaseModel):
     id: UUID
     company: str
@@ -26,6 +24,7 @@ class Pour(BaseModel):
     tag: str
     date: datetime
     volume_m3: float
+    comment: Optional[str] = None
 
 class PourCreate(BaseModel):
     company: str
@@ -33,16 +32,29 @@ class PourCreate(BaseModel):
     tag: str
     date: datetime
     volume_m3: float
+    comment: Optional[str] = None
 
-# === API Routes ===
+@app.get("/", response_class=HTMLResponse)
+def root():
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head><title>Concrete Pour Scheduler</title></head>
+    <body>
+        <h1>Concrete Pour App</h1>
+        <p>Status: <strong>Online ✅</strong></p>
+        <p>Go to <a href='/calendar'>Calendar View</a> to submit and see entries.</p>
+    </body>
+    </html>
+    """
+
+
+
 @app.post("/pour/", response_model=Pour)
 def submit_pour(pour_data: PourCreate):
     if pour_data.company not in PREDEFINED_COMPANIES:
         raise HTTPException(status_code=400, detail="Invalid company")
-    pour = Pour(
-        id=uuid4(),
-        **pour_data.dict()
-    )
+    pour = Pour(id=uuid4(), **pour_data.dict())
     pours.append(pour)
     return pour
 
@@ -50,73 +62,85 @@ def submit_pour(pour_data: PourCreate):
 def list_pours():
     return pours
 
-@app.get("/report/")
-def generate_report():
-    return [
+@app.get("/calendar", response_class=HTMLResponse)
+def calendar_view():
+    events = [
         {
-            "Area": p.area,
-            "Tag": p.tag,
-            "Company": p.company,
-            "Volume": p.volume_m3,
-            "Date": p.date.strftime("%Y-%m-%d")
+            "title": f"{p.company}: {p.tag} ({p.area}) - {p.volume_m3}m³" + (f"\n{p.comment}" if p.comment else ""),
+            "start": p.date.strftime("%Y-%m-%d")
         }
         for p in pours
     ]
-
-# === Simple HTML Form ===
-@app.get("/submit", response_class=HTMLResponse)
-def form_page():
-    table_rows = "".join(
-        f"<tr><td>{p.area}</td><td>{p.tag}</td><td>{p.company}</td><td>{p.volume_m3}</td><td>{p.date.strftime('%Y-%m-%d')}</td></tr>"
-        for p in reversed(pours[-10:])  # Show last 10 entries
-    )
     return f"""
     <html>
-        <head>
-            <title>Submit Concrete Pour</title>
-        </head>
-        <body>
-            <h1>Concrete Pour Submission</h1>
-            <form action="/submit" method="post">
-                Company:
-                <select name="company">
-                    <option value="PCL">PCL</option>
-                    <option value="Graham">Graham</option>
-                    <option value="Bird">Bird</option>
-                </select><br>
-                Area: <input type="text" name="area"><br>
-                Tag: <input type="text" name="tag"><br>
-                Date: <input type="date" name="date"><br>
-                Volume (m³): <input type="number" step="0.1" name="volume"><br>
-                <input type="submit" value="Submit">
-            </form>
-            <p style='color: green;'>Submission successful!</p>
-            <h2>Last 10 Pours</h2>
-            <table border="1">
-                <tr><th>Area</th><th>Tag</th><th>Company</th><th>Volume</th><th>Date</th></tr>
-                {table_rows}
-            </table>
-        </body>
+    <head>
+        <title>Concrete Pour Calendar</title>
+        <link href='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.css' rel='stylesheet' />
+        <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.11/index.global.min.js'></script>
+        <script>
+            document.addEventListener('DOMContentLoaded', function() {{
+                const calendarEl = document.getElementById('calendar');
+                const calendar = new FullCalendar.Calendar(calendarEl, {{
+                    initialView: 'dayGridMonth',
+                    validRange: {{
+                        start: new Date().toISOString().split('T')[0],
+                        end: new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+                    }},
+                    dateClick: function(info) {{
+                        const formHtml = `
+                            <form method='post' action='/submit'>
+                                <input type='hidden' name='date' value='${{info.dateStr}}' />
+                                Company:
+                                <select name='company'>
+                                    <option value='PCL'>PCL</option>
+                                    <option value='Graham'>Graham</option>
+                                    <option value='Bird'>Bird</option>
+                                </select><br>
+                                Area: <input name='area' /><br>
+                                Tag: <input name='tag' /><br>
+                                Volume: <input name='volume' type='number' step='0.1' /><br>
+                                Comment: <input name='comment' /><br>
+                                <input type='submit' value='Submit' />
+                            </form>
+                        `;
+                        const div = document.createElement('div');
+                        div.innerHTML = formHtml;
+                        document.body.appendChild(div);
+                    }},
+                    events: {json.dumps(events)}
+                }});
+                calendar.render();
+            }});
+        </script>
+    </head>
+    <body>
+        <h1>Concrete Pour Calendar</h1>
+        <div id='calendar'></div>
+    </body>
     </html>
     """
 
 @app.post("/submit")
-def handle_form(company: str = Form(...), area: str = Form(...), tag: str = Form(...), date: str = Form(...), volume: float = Form(...)):
+def handle_form(company: str = Form(...), area: str = Form(...), tag: str = Form(...), date: str = Form(...), volume: float = Form(...), comment: Optional[str] = Form(None)):
     try:
         date_parsed = datetime.strptime(date, "%Y-%m-%d")
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format")
-
     if company not in PREDEFINED_COMPANIES:
         raise HTTPException(status_code=400, detail="Invalid company")
-
     pour = Pour(
         id=uuid4(),
         company=company,
         area=area,
         tag=tag,
         date=date_parsed,
-        volume_m3=volume
+        volume_m3=volume,
+        comment=comment
     )
     pours.append(pour)
-    return RedirectResponse(url="/submit?success=true", status_code=303)
+    return RedirectResponse(url="/calendar", status_code=303)
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=True)
