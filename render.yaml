@@ -1,5 +1,9 @@
 services:
   - type: web
-    name: concrete-pour-scheduler
-    env: python
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    name: concrete-pour-app
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PORT
+        value: 10000
