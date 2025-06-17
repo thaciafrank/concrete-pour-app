@@ -15,6 +15,11 @@ pours = []
 
 # === Predefined Companies ===
 PREDEFINED_COMPANIES = ["PCL", "Graham", "Bird"]
+COMPANY_COLORS = {
+    "PCL": "#FFD700",   # Yellow
+    "Graham": "#FF0000", # Red
+    "Bird": "#008000"    # Green
+}
 
 # === Models ===
 class Pour(BaseModel):
@@ -48,8 +53,6 @@ def root():
     </html>
     """
 
-
-
 @app.post("/pour/", response_model=Pour)
 def submit_pour(pour_data: PourCreate):
     if pour_data.company not in PREDEFINED_COMPANIES:
@@ -66,8 +69,10 @@ def list_pours():
 def calendar_view():
     events = [
         {
-            "title": f"{p.company}: {p.tag} ({p.area}) - {p.volume_m3}m³" + (f"\n{p.comment}" if p.comment else ""),
-            "start": p.date.strftime("%Y-%m-%d")
+            "id": str(p.id),
+            "title": f"{p.company}: {p.tag} ({p.area}) - {p.volume_m3}m³" + (f" | {p.comment}" if p.comment else ""),
+            "start": p.date.strftime("%Y-%m-%d"),
+            "color": COMPANY_COLORS.get(p.company, "#000000")
         }
         for p in pours
     ]
@@ -86,22 +91,34 @@ def calendar_view():
                         start: new Date().toISOString().split('T')[0],
                         end: new Date(Date.now() + 28 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
                     }},
+                    eventContent: function(arg) {{
+                        const event = arg.event;
+                        const container = document.createElement('div');
+                        container.innerHTML = `
+                            <span>${{event.title}}</span>
+                            <span style='float:right;cursor:pointer;margin-left:8px;color:white;font-weight:bold;' onclick="deletePour('${{event.id}}')">❌</span>
+                        `;
+                        return {{ domNodes: [container] }};
+                    }},
                     dateClick: function(info) {{
                         const formHtml = `
-                            <form method='post' action='/submit'>
-                                <input type='hidden' name='date' value='${{info.dateStr}}' />
-                                Company:
-                                <select name='company'>
-                                    <option value='PCL'>PCL</option>
-                                    <option value='Graham'>Graham</option>
-                                    <option value='Bird'>Bird</option>
-                                </select><br>
-                                Area: <input name='area' /><br>
-                                Tag: <input name='tag' /><br>
-                                Volume: <input name='volume' type='number' step='0.1' /><br>
-                                Comment: <input name='comment' /><br>
-                                <input type='submit' value='Submit' />
-                            </form>
+                            <div id='popup-form' style='position:fixed;top:10%;left:10%;background:#fff;padding:20px;border:1px solid #ccc;z-index:1000;'>
+                                <form method='post' action='/submit'>
+                                    <input type='hidden' name='date' value='${{info.dateStr}}' />
+                                    Company:
+                                    <select name='company'>
+                                        <option value='PCL'>PCL</option>
+                                        <option value='Graham'>Graham</option>
+                                        <option value='Bird'>Bird</option>
+                                    </select><br>
+                                    Area: <input name='area' /><br>
+                                    Tag: <input name='tag' /><br>
+                                    Volume: <input name='volume' type='number' step='0.1' /><br>
+                                    Comment: <input name='comment' /><br>
+                                    <input type='submit' value='Submit' />
+                                    <button type='button' onclick='document.getElementById("popup-form").remove();'>Cancel</button>
+                                </form>
+                            </div>
                         `;
                         const div = document.createElement('div');
                         div.innerHTML = formHtml;
@@ -111,6 +128,12 @@ def calendar_view():
                 }});
                 calendar.render();
             }});
+
+            function deletePour(id) {{
+                if (confirm("Delete this pour?")) {{
+                    fetch(`/delete/${{id}}`, {{ method: 'POST' }}).then(() => location.reload());
+                }}
+            }}
         </script>
     </head>
     <body>
@@ -139,6 +162,12 @@ def handle_form(company: str = Form(...), area: str = Form(...), tag: str = Form
     )
     pours.append(pour)
     return RedirectResponse(url="/calendar", status_code=303)
+
+@app.post("/delete/{pour_id}")
+def delete_pour(pour_id: UUID):
+    global pours
+    pours = [p for p in pours if p.id != pour_id]
+    return {"status": "deleted"}
 
 if __name__ == "__main__":
     import uvicorn
