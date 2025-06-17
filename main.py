@@ -1,25 +1,45 @@
 import os
 from fastapi import FastAPI, HTTPException, Request, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
 from uuid import uuid4, UUID
 from datetime import datetime, date
 import json
+import csv
+from fpdf import FPDF
 from collections import defaultdict
 
 app = FastAPI()
 
-# === In-Memory Mock DB ===
-pours = []
-deleted_pours = []  # NEW: track deleted pours
+# === Persistent Data File ===
+DATA_FILE = "pours.json"
+LOGO_PATH = "ap_logo.png"  # Logo to include in PDF
+
+def save_data():
+    with open(DATA_FILE, "w") as f:
+        json.dump([p.dict() for p in pours], f, default=str)
+
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            try:
+                data = json.load(f)
+                return [Pour(**d) for d in data]
+            except json.JSONDecodeError:
+                return []
+    return []
+
+# === Load initial data ===
+pours = load_data()
+deleted_pours = []  # runtime only
 
 # === Predefined Companies ===
 PREDEFINED_COMPANIES = ["PCL", "Graham", "Bird"]
 COMPANY_COLORS = {
-    "PCL": "#E6B800",    # Darker Yellow
+    "PCL": "#C7A600",    # Darker Yellow for contrast
     "Graham": "#FF0000", # Red
-    "Bird": "#008000"    # Green
+    "Bird": "#008000"     # Green
 }
 
 # === Models ===
@@ -60,6 +80,7 @@ def submit_pour(pour_data: PourCreate):
         raise HTTPException(status_code=400, detail="Invalid company")
     pour = Pour(id=uuid4(), **pour_data.dict())
     pours.append(pour)
+    save_data()
     return pour
 
 @app.get("/pours/", response_model=List[Pour])
@@ -144,6 +165,7 @@ def calendar_view():
     <body>
         <h1>Concrete Pour Calendar</h1>
         <div id='calendar'></div>
+        <button onclick="window.location.href='/export/pdf'">Export to PDF</button>
         <hr>
         <h2>Deleted Pour Log</h2>
         <ul>{deleted_log or '<li>No deleted pours yet.</li>'}</ul>
@@ -169,6 +191,7 @@ def handle_form(company: str = Form(...), area: str = Form(...), tag: str = Form
         comment=comment
     )
     pours.append(pour)
+    save_data()
     return RedirectResponse(url="/calendar", status_code=303)
 
 @app.post("/delete/{pour_id}")
@@ -182,7 +205,41 @@ def delete_pour(pour_id: UUID):
     if found:
         pours.remove(found)
         deleted_pours.append(found)
+        save_data()
     return {"status": "deleted"}
+
+@app.get("/export/pdf")
+def export_pdf():
+    pdf = FPDF(orientation='L', unit='mm', format='A3')
+    pdf.add_page()
+
+    if os.path.exists(LOGO_PATH):
+        pdf.image(LOGO_PATH, x=10, y=8, w=40)  # Top left corner
+
+    pdf.set_font("Arial", size=12)
+    pdf.cell(0, 10, "Concrete Pour Schedule", ln=True, align='C')
+    pdf.ln(20)
+
+    headers = ["Date", "Company", "Area", "Tag", "Volume (m³)", "Comment"]
+    col_widths = [40, 35, 50, 50, 30, 100]
+    for i, h in enumerate(headers):
+        pdf.cell(col_widths[i], 10, h, 1)
+    pdf.ln()
+    for p in sorted(pours, key=lambda x: x.date):
+        row = [
+            p.date.strftime("%Y-%m-%d"),
+            p.company,
+            p.area,
+            p.tag,
+            f"{p.volume_m3:.1f}",
+            p.comment or ""
+        ]
+        for i, cell in enumerate(row):
+            pdf.cell(col_widths[i], 10, cell, 1)
+        pdf.ln()
+    file_path = "pours_report.pdf"
+    pdf.output(file_path)
+    return FileResponse(path=file_path, filename="concrete_pour_schedule.pdf", media_type='application/pdf')
 
 if __name__ == "__main__":
     import uvicorn
